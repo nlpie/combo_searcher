@@ -1,5 +1,9 @@
 from itertools import combinations, product
 
+class And: pass
+class Or: pass
+class Xor: pass
+
 class Node:
     #class of ensemble systems
     def __init__(self, l, r, op):
