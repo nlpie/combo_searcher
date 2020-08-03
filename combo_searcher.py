@@ -2,130 +2,146 @@ from itertools import combinations, product
 import random
 
 
+_minimum_increase = -1
+
+
+def compose(names, op):
+    r = names[0].expr + op + names[1].expr
+    for n in names[2:]:
+        r = f'({r}){op}{n.expr}'
+    return r
+
+def partitions(n, I=1, start=True):
+    if not start:
+        yield (n,)
+        for i in range(I, n//2 + 1):
+            for p in partitions(n-i, i, False):
+                yield (i,) + p
+    elif start:
+        for i in range(I, n//2 + 1):
+            for p in partitions(n-i, i, False):
+                yieldval = {}
+                for j in ( (i,) + p):
+                    yieldval[j] = yieldval.get(j, 0) + 1
+                yield yieldval
+
+
+
 class Node:
-    #class of ensemble systems
-    def __init__(self, l, r, op):
-        self.l = l
-        self.r = r
+    inner = False
+    def __init__(self, name, scorer):
+        self.names = set([name])
+        self.expr = name
+        self.scorer = scorer
+        self.components = self
+
+    @property
+    def score(self):
+        if not hasattr(self, '_score'):
+            self._score = self.scorer(self.expr)
+        return self._score
+
+    def __repr__(self):
+        return f'{self.expr}'
+
+
+class UnionSet(Node):
+    def __init__(self, names, op, scorer):
+        self.names = set().union(*(n.names for n in names))
+        self.components = names
         self.op = op
+        self.scorer = scorer
 
-    @property
-    def name_set(self):
-        return set([*self.l.name_set, *self.r.name_set])
 
     @property
     def expr(self):
-        return f'({self.l.expr}{self.op}{self.r.expr})'
-
-
-class Leaf:
-    #class of individual systems
-    def __init__(self, leaf):
-        self.leaf = leaf
-
-    @property
-    def name_set(self):
-        return set([self.leaf])
-
-    @property
-    def expr(self):
-        return self.leaf
+        retval = compose(self.components, self.op)
+        if self.inner:
+            return f'({retval})'
+        return retval
 
 
 
-class ResultSet:
-    @classmethod
-    def set_score_method(cls, f):
-        #Set the class's score method before using it. It should either take individual systems
-        #or ensembles of systems as input and return a float as output
-        cls.score_method = staticmethod(f)
 
-    def __init__(self, input1, input2=None, operator=None):
-        if (
-            (input2 is not None and operator is  None)
-            or
-            (input2 is None and operator is not None)
-        ):
-            raise TypeError('arguments must either be input1 or input1, input2, and operator')
-        if input2 is None and operator is None:
-            self.scoree = Leaf(input1)
-        else:
-            self.scoree = Node(input1, input2, operator)
-        self.name_set = self.scoree.name_set
-        self.score = self.score_method(self.scoree.expr)
-        self.expr = self.scoree.expr
+class TierSearcher:
+    def __init__(self, names, op, order, scorer):
+        self.tiers = {i:{'contents': [], 'union': {1:set()}} for i in range(1, order + 1)}
+        self.op = op
+        self.scorer = scorer
+        self.order = order
+        self.tiers[1]['contents'] = names
+        self.tiers[1]['union'][1] = self.tiers[1]['union'][1].union(names)
+        for o in range(2, order + 1):
+            for combo in combinations((n for n in self.tiers[o-1]['union'][1]), o):
+                insert_val = UnionSet(combo, op, scorer)
+                if all(insert_val.score > n.score + _minimum_increase for n in insert_val.components):
+                    self.tiers[o]['contents'].append(insert_val)
+                    self.tiers[o]['union'][1] = self.tiers[o]['union'][1].union(combo)
 
-    @property
-    def score_print(self):
-        if type(self.scoree) == Leaf:
-            return f'{self.scoree.expr}:{self.score}'
-        elif type(self.scoree) == Node:
-            return f'({self.scoree.l.score_print}{self.scoree.op} {self.scoree.r.score_print}):{self.score}'
+    def insert(self, exprs, size):
+        for e in exprs:
+            e.inner = True
+        order_new_union = {size:set()}
+        for o in range(size + 1, self.order + 1):
+            inssize = set()
+            for p in partitions(o):
+                if size in p:
+                    for sizechoose in range(1, p[size] + 1):
+                        oldchoose = p[size] - sizechoose
+                        for combo in product(
+                            combinations(exprs, sizechoose),
+                            combinations(self.tiers[o -1]['union'].get(size, []), oldchoose),
+                            *(combinations(self.tiers[o -1]['union'].get(s, []), pp) for s, pp in p.items()
+                              if s!= size)
+                        ):
+                            news = combo[0]
+                            combo = sum(combo, ())
+                            total_size = sum(len(c.names) for c in combo)
+                            union_size = len(combo[0].names.union(*(c1.names for c1 in combo[1:])))
+                            if union_size == total_size:
+                                insert_val = UnionSet(combo, self.op, self.scorer)
+                                if all(insert_val.score > v.score + _minimum_increase for v in insert_val.components):
+                                    self.tiers[o]['contents'].append(insert_val)
+                                    inssize = inssize.union(news)
+            order_new_union[o] = inssize
+        for o, v in order_new_union.items():
+            self.tiers[o]['union'][size] = self.tiers[o]['union'].get(size, set()).union(v)
+
+    def __repr__(self):
+        return repr(self.tiers)
 
 
-def binary_summands(n):
-    half = n // 2
-    for i in range(1, half+1):
-        yield i, n-i
 
-
-class ComboTabulation:
-    def __init__(self, score_method, ensemblees, operators, max_order=None, minimum_increase=0):
-        ResultSet.set_score_method(score_method)
-        self.cardinality_dict = {}
-        order = len(ensemblees) if max_order is None else max_order
-        self.ensemblees = ensemblees
-        for i in range(1, order + 1):
-            self.cardinality_dict[i] = []
-        for e in ensemblees:
-            self.cardinality_dict[1].append(ResultSet(e))
-        for i in range(2, order + 1):
-            for ll, rr in binary_summands(i):
-                if ll == rr:
-                    generator = combinations(self.cardinality_dict[ll], 2)
-                else:
-                    generator = product(self.cardinality_dict[ll], self.cardinality_dict[rr])
-                for left, right in generator:
-                    for o in operators:
-                        if not left.name_set.intersection(right.name_set):
-                            result = ResultSet(left, right, o)
-                            if (result.score > result.scoree.l.score + minimum_increase
-                            and
-                            result.score > result.scoree.r.score + minimum_increase):
-                                self.cardinality_dict[i].append(result)
-
-    def get_best(self, number_to_retrieve=10):
-        search_list = [value for values in self.cardinality_dict.values() for value in values]
-        search_list.sort(key=lambda x: x.score, reverse=True)
-        search_list = [(r.expr, r.score) for r in search_list]
-        return search_list[:number_to_retrieve]
-
-    def print_all(self):
-        [print(value.score_print) for values in self.cardinality_dict.values() for value in values]
-
-def length_score(expr):
-    return len(expr)
-
-def random_score(expr):
+def rs(n):
     return random.random()
 
-
-#give this function a score method which takes expressions,
-#a list of system names
-#a list of operator symbols
-#order specifies how long the ensembles can get (it defaults to the number of system names
-#minimum increase specifies how much a given ensemble must improve over its components to be considered valid
-#it currently is 0, meaning any improvement at all counts
-#call result.get_best(number_to_return) on the return value to get the best ensembles.
-def get_best_ensembles(score_method=random_score,
-              names=['quick_umls', 'metamap', 'biomedicus', 'clamp', 'ctakes'],
-              operators=['&', '|', '^'],
-              order=None,
-              minimum_increase=0):
-    return ComboTabulation(score_method, names, operators, order, minimum_increase)
-
-
-
-
+def get_best_ensembles(score_method,
+                       names = ['biomedicus', 'quick_umls', 'ctakes', 'clamp', 'metamap'],
+                       operators = ['&', '|', '^'],
+                       order = None, minimum_increase=0):
+    names = [Node(name, score_method) for name in names]
+    operators = set(operators)
+    if order is None:
+        order = len(names)
+    global _minimum_increase
+    _minimum_increase = minimum_increase
+    opdict = {o: TierSearcher(names, o, order, score_method) for o in operators}
+    for size in range(2, order):
+        for others in combinations(operators, len(operators) - 1):
+            original = opdict[next(iter(operators.difference(others)))]
+            for o in others:
+                o = opdict[o]
+                original.insert(o.tiers[size]['contents'], size)
+    retval =  [(n.expr, n.score)
+        for o in opdict.values()
+        for tier in list(o.tiers.values())[1:]
+        for n in tier['contents']
+    ] + [(n.expr, n.score)
+        for o in list(opdict.values())[0:1]
+        for tier in list(o.tiers.values())[0:1]
+        for n in tier['contents']
+    ]
+    retval.sort(key=lambda x: x[1], reverse=True)
+    return retval
 
 
