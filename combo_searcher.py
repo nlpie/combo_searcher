@@ -28,7 +28,6 @@ def partitions(n, I=1, start=True):
 
 
 class Node:
-    inner = False
     def __init__(self, name, scorer):
         self.names = set([name])
         self.expr = name
@@ -56,9 +55,7 @@ class UnionSet(Node):
     @property
     def expr(self):
         retval = compose(self.components, self.op)
-        if self.inner:
-            return f'({retval})'
-        return retval
+        return f'({retval})'
 
 
 
@@ -79,8 +76,6 @@ class TierSearcher:
                     self.tiers[o]['union'][1] = self.tiers[o]['union'][1].union(combo)
 
     def insert(self, exprs, size):
-        for e in exprs:
-            e.inner = True
         order_new_union = {size:set()}
         for o in range(size + 1, self.order + 1):
             inssize = set()
