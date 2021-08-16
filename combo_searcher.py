@@ -169,6 +169,8 @@ def get_best_ensembles(score_method=test_scoring_function,
         appendend = []
         for negator in tiers[outsize]:
             for unop in used_unops:
+                if negator.op == notop:
+                    break
                 e = Expression(unop, negator)
                 escore = scoref(e)
                 e.score = escore
