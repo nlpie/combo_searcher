@@ -6,50 +6,15 @@ import random
 class Expression:
     def __init__(self, op, *children):
         self.op = op
-        self.children = children
+        self.children = list(children)
+        self.canonize()
 
     def __hash__(self):
-        if not hasattr(self, '_hash'):
-            leaf_list = list(self.leaves)
-            leaf_list.sort()
-            self._hash = hash(tuple(leaf_list))
-        return self._hash
+        return hash(str(self))
 
     def __eq__(self, other):
-        if type(other) != type(self):
-            return False
-        elif self.op == other.op:
-            if self.op.associative:
-                return self.associative_set == other.associative_set
-            elif self.op.commutative:
-                return self.child_set == other.child_set
-            elif self.op.unary:
-                return self.children[0] == other.children[0]
-            else:
-                return [f==g for f,g in zip(self.children, other.children)]
-        return self.demorgans(self, other)
+        return str(self) == str(other)
 
-    @staticmethod
-    def demorgans(l, r):
-        if l.op == notop and l.children[0].op in (andop, orop):
-            n = l
-            bi = r
-        elif r.op == notop and r.children[0].op in (andop, orop):
-            n = r
-            bi = l
-        else:
-            return False
-        nop = n.children[0].op
-        biop = bi.op
-        if not (nop == andop and biop == orop or nop == orop and biop == andop):
-            return False
-        a = n.children[0].children[0]
-        b = n.children[0].children[1]
-        c = bi.children[0]
-        d = bi.children[1]
-        if not (c.op == notop and d.op == notop):
-            return False
-        return a == c.children[0] and b == d.children[0]
 
 
 
@@ -71,12 +36,63 @@ class Expression:
             self._child_set = set(self.children)
         return self._child_set
 
+    def __gt__(self, other):
+        return str(self) > str(other)
 
-    def __str__(self):
+    def getstr(self):
         if self.op.unary:
             return f'{self.op.symbol}({self.children[0]})'
         else:
             return self.op.symbol.join(f'({child})' for child in self.children)
+
+    def __str__(self):
+        if not hasattr(self, '_str'):
+            self._str = self.getstr()
+        return self._str
+
+    def canonize(self):
+        startstr = self.getstr()
+        while True:
+            for c in self.children:
+                c.canonize()
+            nl = []
+            if self.op == notop and self.children[0].op == notop:
+                self.op = self.children[0].children[0].op
+                if type(self.children[0].children[0]) == Expression:
+                    self.children = self.children[0].children[0].children
+                else:
+                    self.name = self.children[0].children[0].name
+                    self.__class__ = Leaf
+                    break
+            elif self.op == notop and self.children[0].op == orop:
+                self.op = andop
+                a = self.children[0].children[0]
+                b = self.children[0].children[1]
+                self.children = [Expression(notop, a), Expression(notop, b)]
+            elif self.op == notop and self.children[0].op == andop:
+                self.op = orop
+                a = self.children[0].children[0]
+                b = self.children[0].children[1]
+                self.children = [Expression(notop, a), Expression(notop, b)]
+            elif self.op == xorop and self.children[0].op == notop and self.children[1].op == notop:
+                self.children = [self.children[0].children[0], self.children[1].children[0]]
+            if self.op.associative:
+                for c in self.children:
+                    if c.op == self.op:
+                        nl += c.children
+                    else:
+                        nl.append(c)
+                self.children = nl
+            if self.op.commutative:
+                self.children.sort()
+            if self.getstr() == startstr:
+                break
+            else:
+                startstr = self.getstr()
+        self._str = startstr
+
+
+
     @property
     def leaves(self):
         if not hasattr(self, '_leaves'):
@@ -93,8 +109,8 @@ class Op:
     def __str__(self):
         return self.symbol
 
-andop = Op('&', associative = True)
-orop = Op('|', associative = True)
+andop = Op('&', associative = True, commutative=True)
+orop = Op('|', associative = True, commutative=True)
 xorop = Op('^', commutative = True)
 notop = Op('~', unary=True)
 leafop = Op('')
@@ -105,19 +121,23 @@ class Leaf(Expression):
         self.name = name
 
     def __eq__(self, other):
-        if type(other) != type(self):
-            return False
-        return self.name == other.name
+        return str(self) == str(other)
+
+    def getstr(self):
+        return self.name
 
     def __str__(self):
         return self.name
 
     def __hash__(self):
-        return hash(self.name)
+        return hash(str(self))
 
     @property
     def leaves(self):
         return {self.name}
+
+    def canonize(self):
+        pass
     
 
 def test_scoring_function(e):
@@ -190,56 +210,74 @@ def get_best_ensembles(score_method=test_scoring_function,
 ##associative
 aa = Expression(orop, Expression(orop, Leaf('a'), Leaf('b')), Leaf('c'))
 bb = Expression(orop, Expression(orop, Leaf('b'), Leaf('c')), Leaf('a'))
-print('associative should be true', aa == bb)
+print('commutative should be true', aa == bb)
+print(str(aa), str(bb))
 
 
 aa = Expression(xorop, Expression(xorop, Leaf('a'), Leaf('b')), Leaf('c'))
 bb = Expression(xorop, Expression(xorop, Leaf('b'), Leaf('c')), Leaf('a'))
-print('only commutative should not be true', aa==bb)
+print('associative should not be true', aa==bb)
+print(str(aa), str(bb))
 
 aa = Expression(xorop, Expression(xorop, Leaf('a'), Leaf('b')), Leaf('c'))
 bb = Expression(xorop, Expression(xorop, Leaf('b'), Leaf('a')), Leaf('c'))
 
 print('commutative should be true', aa==bb)
+print(str(aa), str(bb))
 
 aa = Expression(notop, Expression(andop, Leaf('a'), Leaf('b')))
 bb = Expression(orop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
 print('demorgans 1 should be true', aa==bb)
+print(str(aa), str(bb))
 
 
 aa = Expression(notop, Expression(orop, Leaf('a'), Leaf('b')))
 bb = Expression(andop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
 print('demorgans 2 should be true', aa==bb)
+print(str(aa), str(bb))
 
 aa = Expression(notop, Expression(orop, Leaf('a'), Leaf('b')))
 bb = Expression(andop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
 print('demorgans 3 should be true', bb==aa)
+print(str(aa), str(bb))
 
 aa = Expression(notop, Expression(andop, Leaf('a'), Leaf('b')))
 bb = Expression(orop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
 print('demorgans 4 should be true', bb==aa)
+print(str(aa), str(bb))
 
 
 aa = Expression(notop, Expression(andop, Leaf('a'), Leaf('b')))
 bb = Expression(orop, Expression(notop, Leaf('a')), Expression(andop, Leaf('b')))
 print('demorgans difference 1 should not be true', aa==bb)
+print(str(aa), str(bb))
 
 
 aa = Expression(notop, Expression(andop, Leaf('a'), Leaf('b')))
 bb = Expression(andop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
 print('demorgans difference 2 should not be true', aa==bb)
+print(str(aa), str(bb))
 
 
 aa = Expression(notop, Expression(orop, Leaf('a'), Leaf('b')))
 bb = Expression(orop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
 print('demorgans difference 3 should not be true', aa==bb)
+print(str(aa), str(bb))
 
 
 aa = Expression(notop, Expression(orop, Leaf('a'), Leaf('b')))
 bb = Expression(orop, Expression(notop, Leaf('a')), Expression(andop, Leaf('b')))
 print('demorgans difference 4 should not be true', aa==bb)
+print(str(aa), str(bb))
 
 
 aa = Expression(notop, Expression(andop, Leaf('a'), Leaf('b')))
 bb = Expression(orop, Expression(notop, Leaf('a')), Expression(notop, Leaf('c')))
 print('demorgans difference 5 should not be true', aa==bb)
+print(str(aa), str(bb))
+
+
+aa = Expression(xorop, Leaf('a'), Leaf('b'))
+bb = Expression(xorop, Expression(notop, Leaf('a')), Expression(notop, Leaf('b')))
+print('demorgans xor should be true', aa==bb)
+print(str(aa), str(bb))
